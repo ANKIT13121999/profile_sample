@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Dict, Any
-from box_agent import ChromaDBManager
+from lox_agent import ChromaDBManager
 from xyz import chat   # your org’s chat model (used for routing)
 
 app = FastAPI(title="MCP Server", description="Multi-Agent Orchestrator")
@@ -16,9 +16,9 @@ class QueryInput(BaseModel):
     min_score: float = 0.0
 
 # ------------------------------
-# Initialize Box Agent
+# Initialize lox Agent
 # ------------------------------
-box_agent = ChromaDBManager(
+lox_agent = ChromaDBManager(
     persist_directory="./my_pdf_db",
     embedding_model_name="bembedd-1rg"
 )
@@ -29,10 +29,10 @@ box_agent = ChromaDBManager(
 def route_query(query: str) -> str:
     """
     Use your custom LLM to decide which agent to call.
-    Returns: "box" | "radar"
+    Returns: "lox" | "ladar"
     """
     messages = [
-        {"role": "system", "content": "You are a router. Decide if the user query is about PDF documents (box) or tickets (radar). Respond only 'box' or 'radar'."},
+        {"role": "system", "content": "You are a router. Decide if the user query is about PDF documents (lox) or tickets (ladar). Respond only 'lox' or 'ladar'."},
         {"role": "user", "content": query}
     ]
     response = chat(messages)  # using your org’s LLM
@@ -40,7 +40,7 @@ def route_query(query: str) -> str:
         decision = response.content.strip().lower()
     else:
         decision = str(response).strip().lower()
-    return "box" if "box" in decision else "radar"
+    return "lox" if "lox" in decision else "ladar"
 
 # ------------------------------
 # Endpoints
@@ -50,16 +50,17 @@ def handle_query(req: QueryInput) -> Dict[str, Any]:
     # Step 1: Route query
     agent = route_query(req.query)
 
-    if agent == "box":
-        # Step 2a: Handle with Box agent
-        result = box_agent.query_with_rag(
+    if agent == "lox":
+        # Step 2a: Handle with lox agent
+        result = lox_agent.query_with_rag(
             user_query=req.query,
             n_results=req.n_results,
             chunk_type=req.chunk_type,
             min_score=req.min_score
         )
-        return {"agent": "box", "query": req.query, "result": result}
+        return {"agent": "lox", "query": req.query, "result": result}
 
-    elif agent == "radar":
-        # Step 2b: Radar stub for now
-        return {"agent": "radar", "query": req.query, "result": "🚧 Radar agent under construction"}
+    elif agent == "ladar":
+        # Step 2b: ladar stub for now
+        return {"agent": "ladar", "query": req.query, "result": "🚧 ladar agent under construction"}
+
