@@ -519,65 +519,64 @@ Document and Image Context:""" + full_context
             }
     
     def print_intelligent_result(self, result: Dict):
-        """Pretty print intelligent query result with content analysis"""
+        """Pretty print intelligent query result emphasizing unified response"""
         print("\n" + "="*80)
-        print("🤖 INTELLIGENT UNIVERSAL RAG RESULT")
+        print("🤖 UNIFIED RAG RESPONSE")
         print("="*80)
         
         print(f"❓ Query: {result['query']}")
         print(f"✅ Success: {result['success']}")
+        print(f"🎯 Response Type: {result.get('response_type', 'unified').title()}")
         
         if result['success']:
             content_summary = result['content_summary']
             total_content = sum(content_summary.values())
-            print(f"📚 Total Content Used: {total_content}")
-            print(f"📊 Content Breakdown:")
+            print(f"📚 Sources Synthesized: {total_content}")
+            print(f"📊 Content Mix:")
             for content_type, count in content_summary.items():
                 if count > 0:
-                    print(f"   • {content_type.title()}: {count}")
+                    print(f"   • {content_type.title()}: {count} sources")
         
-        print(f"\n💬 Answer:")
-        print("-" * 40)
+        print(f"\n💬 UNIFIED ANSWER:")
+        print("=" * 60)
         print(result['answer'])
-        print("-" * 40)
+        print("=" * 60)
         
-        # Show images found (if any)
+        # Show supporting evidence breakdown
         if result.get('images'):
-            print(f"\n🖼️  Images Used ({len(result['images'])}):")
+            print(f"\n🖼️  Visual Evidence Used ({len(result['images'])} images):")
             for i, img_info in enumerate(result['images'], 1):
-                print(f"\n{i}. 📷 Image from Page {img_info['page']} (Score: {img_info['score']:.3f})")
-                print(f"   📁 File: {img_info['image_path']}")
-                print(f"   📐 Size: {img_info['dimensions']}")
-                print(f"   📝 Description: {img_info['description'][:100]}...")
-                if img_info['caption']:
-                    print(f"   🏷️  Caption: {img_info['caption']}")
-                print(f"   🔗 PDF Link: {img_info['pdf_link']}")
+                print(f"   {i}. Page {img_info['page']} - {img_info['description'][:80]}...")
+                print(f"      📁 {img_info['image_path']}")
         
-        # Show PDF links for top documents
         if result.get('pdf_links'):
-            top_links = sorted(result['pdf_links'], key=lambda x: x['score'], reverse=True)[:5]
-            print(f"\n🔗 Top Source Links ({len(top_links)} of {len(result['pdf_links'])}):")
-            for i, link_info in enumerate(top_links, 1):
-                print(f"\n{i}. 📄 {link_info['chunk_type'].title()} from Page {link_info['page']}")
-                print(f"   🎯 Relevance: {link_info['score']:.3f}")
-                print(f"   🔗 Click to open: {link_info['url']}")
-        
-        # Show content distribution
-        if result.get('retrieved_docs'):
-            print(f"\n📋 All Retrieved Content ({len(result['retrieved_docs'])}):")
-            type_pages = {}
-            for doc in result['retrieved_docs']:
-                chunk_type = doc['metadata'].get('chunk_type', 'unknown')
-                page = doc['metadata'].get('page_number', 'N/A')
-                score = doc['score']
-                
-                if chunk_type not in type_pages:
-                    type_pages[chunk_type] = []
-                type_pages[chunk_type].append(f"Page {page} ({score:.3f})")
+            # Group by content type for organized display
+            links_by_type = {}
+            for link in result['pdf_links']:
+                content_type = link['chunk_type']
+                if content_type not in links_by_type:
+                    links_by_type[content_type] = []
+                links_by_type[content_type].append(link)
             
-            for chunk_type, pages in type_pages.items():
-                print(f"   • {chunk_type.title()}: {', '.join(pages[:3])}")
-                if len(pages) > 3:
+            print(f"\n📑 Source Pages Referenced:")
+            for content_type, links in links_by_type.items():
+                pages = [f"Page {link['page']}" for link in sorted(links, key=lambda x: x['page'])]
+                print(f"   • {content_type.title()}: {', '.join(pages[:5])}")
+                if len(pages) > 5:
+                    print(f"     ... and {len(pages) - 5} more pages")
+        
+        # Show quality metrics
+        if result.get('retrieved_docs'):
+            scores = [doc['score'] for doc in result['retrieved_docs']]
+            avg_score = sum(scores) / len(scores)
+            max_score = max(scores)
+            print(f"\n📈 Source Quality:")
+            print(f"   • Average Relevance: {avg_score:.3f}")
+            print(f"   • Best Match Score: {max_score:.3f}")
+            print(f"   • Total Sources Used: {len(result['retrieved_docs'])}")
+        
+        print(f"\n✨ This response synthesizes information from multiple sources into one comprehensive answer.")
+        print(f"💡 All relevant text, images, and tables were considered together.")3:
                     print(f"     ... and {len(pages) - 3} more")
     
     def get_stats(self) -> Dict:
