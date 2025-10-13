@@ -1,5 +1,8 @@
 from xyz import chat
 from langchain.schema import Human, System
+import os
+import glob
+from pathlib import Path
 
 class DDLToSQLGenerator:
     def __init__(self):
@@ -166,88 +169,21 @@ if __name__ == "__main__":
     print("\n=== Example 4: Analytical queries ===")
     result4 = generator.generate_queries_from_ddl(new_ddl, "analysis")
     print(result4)
-
-
-# Advanced Example: Batch Processing Multiple Tables
-class BatchDDLProcessor:
-    def __init__(self):
-        self.generator = DDLToSQLGenerator()
     
-    def process_schema_changes(self, schema_changes):
-        """
-        Process multiple table changes
-        schema_changes: dict with table names as keys and (old_ddl, new_ddl) tuples as values
-        """
-        results = {}
-        
-        for table_name, (old_ddl, new_ddl) in schema_changes.items():
-            print(f"\nProcessing table: {table_name}")
-            results[table_name] = self.generator.detect_and_generate_changes(
-                old_ddl, new_ddl, table_name
-            )
-        
-        return results
+    # Example 5: Generate analytical query based on user question
+    print("\n=== Example 5: User Question-based Analytical Query ===")
+    user_question = "Show me the top 5 customers by email domain who were created in the last month and are active"
+    result5 = generator.generate_analytical_query(new_ddl, user_question)
+    print(result5)
     
-    def generate_migration_script(self, schema_changes):
-        """Generate a complete migration script for all changes"""
-        messages = [
-            System(content=self.generator.system_prompt),
-            Human(content=f"""Generate a complete Snowflake migration script for these schema changes:
-
-{schema_changes}
-
-Include:
-1. Transaction control (BEGIN/COMMIT/ROLLBACK)
-2. All ALTER statements in correct order
-3. Comments for each change
-4. Verification queries to check changes
-5. Rollback statements in comments
-
-Format as a production-ready migration script.""")
-        ]
-        
-        response = chat(messages)
-        return response
-
-
-# Usage with custom prompt engineering
-def custom_sql_generation(ddl, custom_requirements):
-    """Allow custom requirements for SQL generation"""
-    system_prompt = """You are an expert SQL engineer. Generate SQL based on DDL and specific requirements."""
+    # Example 6: More complex analytical questions
+    print("\n=== Example 6: Complex Analytical Query ===")
+    complex_question = "What is the month-over-month growth rate of new active customers, grouped by their status?"
+    result6 = generator.generate_analytical_query(new_ddl, complex_question)
+    print(result6)
     
-    messages = [
-        System(content=system_prompt),
-        Human(content=f"""DDL:
-{ddl}
-
-Requirements:
-{custom_requirements}
-
-Generate the appropriate SQL queries.""")
-    ]
-    
-    response = chat(messages)
-    return response
-
-
-# Example with specific business logic
-ddl = """
-CREATE TABLE orders (
-    order_id INT,
-    customer_id INT,
-    order_date TIMESTAMP,
-    total_amount DECIMAL(10,2),
-    status VARCHAR(20)
-);
-"""
-
-requirements = """
-1. Create a query to find top 10 customers by total order value
-2. Create a query to find orders placed in the last 30 days
-3. Create a query to calculate monthly revenue
-4. All queries should include proper date formatting and number formatting
-"""
-
-result = custom_sql_generation(ddl, requirements)
-print("\n=== Custom Business Logic Queries ===")
-print(result)
+    # Example 7: Analytical query with aggregations
+    print("\n=== Example 7: Aggregation Query ===")
+    agg_question = "Calculate the total count of customers by status and show the percentage distribution"
+    result7 = generator.generate_analytical_query(new_ddl, agg_question)
+    print(result7)
