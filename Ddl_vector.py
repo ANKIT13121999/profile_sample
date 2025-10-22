@@ -1,56 +1,68 @@
 from xyz import chat
 from langchain.schema import Human, System
-from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType, utility
+from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType, utility, MilvusClient
 from inter.core.clients.xorclient import xorClient
 import json
 from datetime import datetime
+import os
+import glob
 
 class DDLVectorStore:
-    """Manages DDL storage and retrieval using Milvus"""
+    """Manages DDL storage and retrieval using Milvus Lite (local file-based storage)"""
     
-    def __init__(self, host="localhost", port="19530", collection_name="ddl_store", 
+    def __init__(self, db_path="./milvus_ddl.db", collection_name="ddl_store", 
                  embedding_model_name="bembedd-1rg", embedding_dim=1024):
         self.collection_name = collection_name
+        self.db_path = db_path
         
         # Initialize custom xorClient for embeddings
         self.embedding_client = xorClient()
         self.embedding_model_name = embedding_model_name
         self.embedding_dim = embedding_dim
         
-        # Connect to Milvus
-        connections.connect(host=host, port=port)
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else '.', exist_ok=True)
+        
+        # Connect to Milvus Lite (local file-based database)
+        self.client = MilvusClient(db_path)
         
         # Create collection if not exists
         self._create_collection()
     
     def _create_collection(self):
         """Create Milvus collection for DDL storage"""
-        if utility.has_collection(self.collection_name):
-            self.collection = Collection(self.collection_name)
+        if self.client.has_collection(self.collection_name):
             return
         
-        # Define schema
-        fields = [
-            FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
-            FieldSchema(name="table_name", dtype=DataType.VARCHAR, max_length=200),
-            FieldSchema(name="schema_name", dtype=DataType.VARCHAR, max_length=200),
-            FieldSchema(name="ddl_content", dtype=DataType.VARCHAR, max_length=65535),
-            FieldSchema(name="ddl_summary", dtype=DataType.VARCHAR, max_length=2000),
-            FieldSchema(name="column_names", dtype=DataType.VARCHAR, max_length=5000),
-            FieldSchema(name="timestamp", dtype=DataType.VARCHAR, max_length=100),
-            FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=self.embedding_dim)
-        ]
+        # Define schema for Milvus Lite
+        schema = self.client.create_schema(
+            auto_id=True,
+            enable_dynamic_field=True
+        )
         
-        schema = CollectionSchema(fields=fields, description="DDL Storage")
-        self.collection = Collection(name=self.collection_name, schema=schema)
+        schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True, auto_id=True)
+        schema.add_field(field_name="table_name", datatype=DataType.VARCHAR, max_length=200)
+        schema.add_field(field_name="schema_name", datatype=DataType.VARCHAR, max_length=200)
+        schema.add_field(field_name="ddl_content", datatype=DataType.VARCHAR, max_length=65535)
+        schema.add_field(field_name="ddl_summary", datatype=DataType.VARCHAR, max_length=2000)
+        schema.add_field(field_name="column_names", datatype=DataType.VARCHAR, max_length=5000)
+        schema.add_field(field_name="timestamp", datatype=DataType.VARCHAR, max_length=100)
+        schema.add_field(field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=self.embedding_dim)
         
-        # Create index for vector search
-        index_params = {
-            "metric_type": "L2",
-            "index_type": "IVF_FLAT",
-            "params": {"nlist": 128}
-        }
-        self.collection.create_index(field_name="embedding", index_params=index_params)
+        # Create index params
+        index_params = self.client.prepare_index_params()
+        index_params.add_index(
+            field_name="embedding",
+            index_type="FLAT",  # FLAT is good for small to medium datasets
+            metric_type="L2"
+        )
+        
+        # Create collection
+        self.client.create_collection(
+            collection_name=self.collection_name,
+            schema=schema,
+            index_params=index_params
+        )
     
     def _extract_ddl_metadata(self, ddl_content):
         """Extract metadata from DDL for better searchability"""
@@ -81,12 +93,31 @@ class DDLVectorStore:
         return table_name, columns, summary
     
     def _create_embedding(self, text):
-        """Generate embedding for text"""
-        embedding = self.embedding_model.encode(text)
-        return embedding.tolist()
+        """Generate embedding using custom xorClient model"""
+        response = self.embedding_client.get_embedding(
+            input=text, 
+            model_name=self.embedding_model_name
+        )
+        
+        # Extract embedding from response
+        # Adjust based on actual response structure
+        if hasattr(response, 'embedding'):
+            embedding = response.embedding
+        elif hasattr(response, 'data') and len(response.data) > 0:
+            embedding = response.data[0].embedding
+        elif isinstance(response, dict):
+            embedding = response.get('embedding') or response.get('data', [{}])[0].get('embedding')
+        else:
+            embedding = response
+        
+        # Ensure it's a list
+        if not isinstance(embedding, list):
+            embedding = list(embedding)
+        
+        return embedding
     
     def store_ddl(self, ddl_content, schema_name="public"):
-        """Store DDL in Milvus"""
+        """Store DDL in Milvus Lite"""
         table_name, columns, summary = self._extract_ddl_metadata(ddl_content)
         
         # Create embedding from DDL content and summary
@@ -94,7 +125,7 @@ class DDLVectorStore:
         embedding = self._create_embedding(embedding_text)
         
         # Prepare data
-        data = [{
+        data = {
             "table_name": table_name,
             "schema_name": schema_name,
             "ddl_content": ddl_content,
@@ -102,11 +133,10 @@ class DDLVectorStore:
             "column_names": json.dumps(columns),
             "timestamp": datetime.now().isoformat(),
             "embedding": embedding
-        }]
+        }
         
         # Insert into Milvus
-        self.collection.insert(data)
-        self.collection.flush()
+        self.client.insert(collection_name=self.collection_name, data=data)
         
         print(f"✓ Stored DDL for table: {table_name}")
         return table_name
@@ -116,15 +146,10 @@ class DDLVectorStore:
         # Generate query embedding
         query_embedding = self._create_embedding(query)
         
-        # Load collection
-        self.collection.load()
-        
         # Search
-        search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
-        results = self.collection.search(
+        results = self.client.search(
+            collection_name=self.collection_name,
             data=[query_embedding],
-            anns_field="embedding",
-            param=search_params,
             limit=top_k,
             output_fields=["table_name", "schema_name", "ddl_content", "ddl_summary", "column_names"]
         )
@@ -134,48 +159,54 @@ class DDLVectorStore:
         for hits in results:
             for hit in hits:
                 ddl_results.append({
-                    "table_name": hit.entity.get("table_name"),
-                    "schema_name": hit.entity.get("schema_name"),
-                    "ddl_content": hit.entity.get("ddl_content"),
-                    "ddl_summary": hit.entity.get("ddl_summary"),
-                    "column_names": json.loads(hit.entity.get("column_names")),
-                    "distance": hit.distance
+                    "table_name": hit.get("entity", {}).get("table_name") or hit.get("table_name"),
+                    "schema_name": hit.get("entity", {}).get("schema_name") or hit.get("schema_name"),
+                    "ddl_content": hit.get("entity", {}).get("ddl_content") or hit.get("ddl_content"),
+                    "ddl_summary": hit.get("entity", {}).get("ddl_summary") or hit.get("ddl_summary"),
+                    "column_names": json.loads(hit.get("entity", {}).get("column_names") or hit.get("column_names", "[]")),
+                    "distance": hit.get("distance", 0)
                 })
         
         return ddl_results
     
     def get_ddl_by_table_name(self, table_name):
         """Retrieve DDL by exact table name"""
-        self.collection.load()
-        
-        expr = f'table_name == "{table_name}"'
-        results = self.collection.query(
-            expr=expr,
+        results = self.client.query(
+            collection_name=self.collection_name,
+            filter=f'table_name == "{table_name}"',
             output_fields=["table_name", "schema_name", "ddl_content", "ddl_summary", "column_names"]
         )
         
         if results:
+            result = results[0]
             return {
-                "table_name": results[0].get("table_name"),
-                "schema_name": results[0].get("schema_name"),
-                "ddl_content": results[0].get("ddl_content"),
-                "ddl_summary": results[0].get("ddl_summary"),
-                "column_names": json.loads(results[0].get("column_names"))
+                "table_name": result.get("table_name"),
+                "schema_name": result.get("schema_name"),
+                "ddl_content": result.get("ddl_content"),
+                "ddl_summary": result.get("ddl_summary"),
+                "column_names": json.loads(result.get("column_names", "[]"))
             }
         return None
     
     def delete_ddl(self, table_name):
         """Delete DDL by table name"""
-        expr = f'table_name == "{table_name}"'
-        self.collection.delete(expr)
+        self.client.delete(
+            collection_name=self.collection_name,
+            filter=f'table_name == "{table_name}"'
+        )
         print(f"✓ Deleted DDL for table: {table_name}")
 
 
 class DDLToSQLGenerator:
     """Generate SQL queries using LLM with Milvus-backed DDL retrieval"""
     
-    def __init__(self, milvus_host="localhost", milvus_port="19530"):
-        self.vector_store = DDLVectorStore(host=milvus_host, port=milvus_port)
+    def __init__(self, db_path="./milvus_ddl.db", 
+                 embedding_model_name="bembedd-1rg", embedding_dim=1024):
+        self.vector_store = DDLVectorStore(
+            db_path=db_path,
+            embedding_model_name=embedding_model_name,
+            embedding_dim=embedding_dim
+        )
         self.system_prompt = """You are an expert SQL database engineer specializing in Snowflake DDL analysis and SQL query generation.
 
 Your task is to:
@@ -329,8 +360,13 @@ Generate the appropriate SQL query based on the description and available tables
 
 # Example Usage
 if __name__ == "__main__":
-    # Initialize generator
-    generator = DDLToSQLGenerator()
+    # Initialize generator with custom embedding model
+    # This will create a local file: ./milvus_ddl.db (no server needed!)
+    generator = DDLToSQLGenerator(
+        db_path="./milvus_ddl.db",  # Local file path
+        embedding_model_name="bembedd-1rg",
+        embedding_dim=1024  # Adjust based on your model's output dimension
+    )
     
     # Step 1: Store initial DDLs
     print("=== Step 1: Storing Initial DDLs ===")
