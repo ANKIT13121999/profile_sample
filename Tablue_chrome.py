@@ -10,7 +10,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import time
 
 def setup_driver():
-    """Setup Chrome driver for macOS without sign-in"""
+    """Setup Chrome driver for macOS without admin privileges"""
     chrome_options = ChromeOptions()
     
     # Prevent Chrome sign-in prompts
@@ -29,12 +29,25 @@ def setup_driver():
     # Uncomment the line below to run in headless mode (without opening browser window)
     # chrome_options.add_argument('--headless')
     
+    print("Setting up Chrome WebDriver (no admin privileges needed)...")
+    
     # Auto-download and setup chromedriver
     service = ChromeService(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
+    
+    print("\n" + "="*60)
+    print("IMPORTANT: Chrome window will open now")
+    print("="*60)
+    print("If you see an authentication/login screen:")
+    print("  1. Manually complete the authentication/login")
+    print("  2. Wait for the page to fully load")
+    print("  3. The script will automatically continue")
+    print("  4. Chrome will remember your session for all other links")
+    print("="*60 + "\n")
+    
     return driver
 
-def check_tableau_link(driver, url, wait_time=10):
+def check_tableau_link(driver, url, wait_time=15):
     """
     Check if a Tableau link shows permission required or page unavailable
     
@@ -42,19 +55,43 @@ def check_tableau_link(driver, url, wait_time=10):
         str: Status message - "Permission Required", "Page unavailable", "Accessible", or "Error: <message>"
     """
     try:
+        original_url = url
         driver.get(url)
         
-        # Wait for page to load
-        time.sleep(3)
+        # Wait longer for page to load and handle redirects/authentication
+        time.sleep(5)
         
-        # Get page source and text
+        # Check if there's an authentication redirect or intermediate page
+        # Wait for any redirects to complete
+        current_url = driver.current_url
+        time.sleep(2)
+        
+        # If URL changed, wait a bit more for final redirect
+        if driver.current_url != current_url:
+            time.sleep(3)
+        
+        # Get final URL after all redirects
+        final_url = driver.current_url.lower()
+        
+        # CRITICAL CHECK: Detect URL pattern changes
+        # Page unavailable: URL changes to original_link/connections
+        if final_url.endswith('/connections') or '/connections' in final_url:
+            return "Page unavailable"
+        
+        # Permission required: URL gets trimmed to tableau org page ending with /home
+        if final_url.endswith('/home') and final_url != original_url.lower():
+            # Redirected to home page = no permission
+            return "Permission Required"
+        
+        # Get page source and text after all redirects
         page_text = driver.page_source.lower()
+        page_title = driver.title.lower()
         
-        # Check for "Permission Required" message
+        # Check for "Permission Required" message in content
         if "permission required" in page_text or "you don't have access" in page_text:
             return "Permission Required"
         
-        # Check for "Page unavailable" message
+        # Check for "Page unavailable" message in content
         if "page unavailable" in page_text or "content you are looking for doesn't exist" in page_text:
             return "Page unavailable"
         
@@ -64,6 +101,14 @@ def check_tableau_link(driver, url, wait_time=10):
         
         if "unauthorized" in page_text or "403" in page_text:
             return "Permission Required"
+        
+        # Check if still on an authentication/login page
+        if "sign in" in page_text or "login" in page_text or "authenticate" in page_text:
+            # Wait a bit more in case it auto-redirects
+            time.sleep(3)
+            page_text = driver.page_source.lower()
+            if "sign in" in page_text or "login" in page_text:
+                return "Authentication Required"
         
         # Try to find specific elements that indicate permission/availability issues
         try:
@@ -85,7 +130,7 @@ def check_tableau_link(driver, url, wait_time=10):
         except:
             pass
         
-        # If no error messages found, assume accessible
+        # If no error messages found and URL didn't redirect to error pages, assume accessible
         return "Accessible"
         
     except TimeoutException:
