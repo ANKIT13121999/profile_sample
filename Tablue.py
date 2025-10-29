@@ -8,12 +8,22 @@ import time
 
 def setup_driver():
     """Setup Safari driver for macOS"""
-    # Safari WebDriver is built into macOS, no installation needed!
-    # Just make sure "Allow Remote Automation" is enabled in Safari's Develop menu
-    driver = webdriver.Safari()
-    return driver
+    try:
+        # Try to use Safari WebDriver
+        driver = webdriver.Safari()
+        return driver
+    except Exception as e:
+        print(f"Safari WebDriver error: {e}")
+        print("\nTrying alternative method...")
+        # If Safari fails, provide instructions
+        print("\nTo enable Safari WebDriver, run this command in Terminal:")
+        print("  safaridriver --enable")
+        print("\nIf you don't remember your password:")
+        print("  - Try using Touch ID instead")
+        print("  - Or go to System Settings > Touch ID & Password to reset")
+        raise
 
-def check_tableau_link(driver, url, wait_time=10):
+def check_tableau_link(driver, url, wait_time=15):
     """
     Check if a Tableau link shows permission required or page unavailable
     
@@ -23,11 +33,21 @@ def check_tableau_link(driver, url, wait_time=10):
     try:
         driver.get(url)
         
-        # Wait for page to load
-        time.sleep(3)
+        # Wait longer for page to load and handle redirects/authentication
+        time.sleep(5)
         
-        # Get page source and text
+        # Check if there's an authentication redirect or intermediate page
+        # Wait for any redirects to complete
+        current_url = driver.current_url
+        time.sleep(2)
+        
+        # If URL changed, wait a bit more for final redirect
+        if driver.current_url != current_url:
+            time.sleep(3)
+        
+        # Get page source and text after all redirects
         page_text = driver.page_source.lower()
+        page_title = driver.title.lower()
         
         # Check for "Permission Required" message
         if "permission required" in page_text or "you don't have access" in page_text:
@@ -43,6 +63,14 @@ def check_tableau_link(driver, url, wait_time=10):
         
         if "unauthorized" in page_text or "403" in page_text:
             return "Permission Required"
+        
+        # Check if still on an authentication/login page
+        if "sign in" in page_text or "login" in page_text or "authenticate" in page_text:
+            # Wait a bit more in case it auto-redirects
+            time.sleep(3)
+            page_text = driver.page_source.lower()
+            if "sign in" in page_text or "login" in page_text:
+                return "Authentication Required"
         
         # Try to find specific elements that indicate permission/availability issues
         try:
