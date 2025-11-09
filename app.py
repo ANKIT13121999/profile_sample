@@ -130,13 +130,7 @@ with tab1:
                     
                     try:
                         # Create output directory for saved JSON files
-                        output_dir = "./pdf_processing_output"
-                        if not os.path.exists(output_dir):
-                            os.makedirs(output_dir)
-                        
-                        # Generate timestamp for unique filenames
-                        from datetime import datetime
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        # output_dir already created above
                         
                         # Step 1: Chunking
                         status_text.text("📄 Step 1/3: Extracting chunks from PDFs...")
@@ -152,20 +146,20 @@ with tab1:
                         
                         progress_bar.progress(33)
                         
-                        # Save chunks to BOTH temp and persistent directory
-                        chunks_file_temp = os.path.join(temp_dir, "chunks.json")
+                        # Save chunks to persistent directory (no temp file needed)
                         chunks_file_saved = os.path.join(output_dir, f"chunks_{timestamp}.json")
                         
-                        chunker.save_chunks_to_json(all_chunks, chunks_file_temp)
                         chunker.save_chunks_to_json(all_chunks, chunks_file_saved)
                         
-                        st.session_state.chunks_file = chunks_file_temp
                         st.session_state.chunks_file_saved = chunks_file_saved
                         
                         # Display chunk stats
                         st.success(f"✅ Extracted {len(all_chunks['text_chunks'])} text chunks, "
                                  f"{len(all_chunks['image_chunks'])} images, "
                                  f"{len(all_chunks['table_chunks'])} tables")
+                        
+                        # Show saved file location
+                        st.info(f"📁 Chunks saved to: `{chunks_file_saved}`")
                         
                         # Step 2: Embedding
                         status_text.text("🔢 Step 2/3: Generating embeddings...")
@@ -176,18 +170,28 @@ with tab1:
                             caption_model_name=caption_model
                         )
                         
+                        # Define both file paths
+                        embeddings_file_saved = os.path.join(output_dir, f"embeddings_{timestamp}.json")
+                        
                         with st.spinner("Generating embeddings..."):
+                            # Process and save directly to persistent directory
                             processed_chunks = processor.process_all_chunks(
-                                chunks_file,
-                                output_file=os.path.join(temp_dir, "embeddings.json")
+                                chunks_file_saved,
+                                output_file=embeddings_file_saved
                             )
                         
                         progress_bar.progress(66)
                         
-                        embeddings_file = os.path.join(temp_dir, "embeddings.json")
-                        st.session_state.embeddings_file = embeddings_file
+                        # Verify the file was created
+                        if os.path.exists(embeddings_file_saved):
+                            file_size = os.path.getsize(embeddings_file_saved) / (1024 * 1024)  # MB
+                            st.success(f"✅ Embeddings generated successfully ({file_size:.2f} MB)")
+                            st.info(f"📁 Embeddings saved to: `{embeddings_file_saved}`")
+                        else:
+                            st.error(f"⚠️ Warning: Embeddings file not found at {embeddings_file_saved}")
                         
-                        st.success("✅ Embeddings generated successfully")
+                        st.session_state.embeddings_file = embeddings_file_saved
+                        st.session_state.embeddings_file_saved = embeddings_file_saved
                         
                         # Step 3: Insert into ChromaDB
                         status_text.text("💾 Step 3/3: Storing in vector database...")
@@ -200,7 +204,7 @@ with tab1:
                         )
                         
                         with st.spinner("Inserting into database..."):
-                            total_inserted = db.insert_chunks_from_json(embeddings_file)
+                            total_inserted = db.insert_chunks_from_json(embeddings_file_saved)
                         
                         progress_bar.progress(100)
                         status_text.text("✅ Processing complete!")
@@ -211,8 +215,38 @@ with tab1:
                         st.session_state.processing_complete = True
                         st.session_state.db_initialized = True
                         
-                        # Display summary
+                        # Display summary with file locations
                         with st.expander("📊 Processing Summary", expanded=True):
+                            st.subheader("📁 Saved Files")
+                            st.write(f"**Chunks JSON:** `{chunks_file_saved}`")
+                            st.write(f"**Embeddings JSON:** `{embeddings_file_saved}`")
+                            st.write(f"**ChromaDB:** `{persist_dir}`")
+                            
+                            # Add download buttons for the JSON files
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                with open(chunks_file_saved, 'r') as f:
+                                    chunks_json = f.read()
+                                st.download_button(
+                                    label="📥 Download Chunks JSON",
+                                    data=chunks_json,
+                                    file_name=f"chunks_{timestamp}.json",
+                                    mime="application/json"
+                                )
+                            
+                            with col2:
+                                with open(embeddings_file_saved, 'r') as f:
+                                    embeddings_json = f.read()
+                                st.download_button(
+                                    label="📥 Download Embeddings JSON",
+                                    data=embeddings_json,
+                                    file_name=f"embeddings_{timestamp}.json",
+                                    mime="application/json"
+                                )
+                            
+                            st.divider()
+                            
                             stats = db.get_stats()
                             col1, col2, col3 = st.columns(3)
                             
@@ -247,7 +281,8 @@ with tab2:
             db = ChromaDBManager(
                 persist_directory=persist_dir,
                 collection_name=collection_name,
-                embedding_model_name=embedding_model
+                embedding_model_name=embedding_model,
+                streamlit_mode=True  # Enable Streamlit-specific features
             )
             
             # PDF filter options
