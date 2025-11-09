@@ -12,7 +12,7 @@ from utils.rag_system import ChromaDBManager
 
 # Page configuration
 st.set_page_config(
-    page_title="PDF RAG System",
+    page_title="Multi-PDF RAG System",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -27,10 +27,12 @@ if 'embeddings_file' not in st.session_state:
     st.session_state.embeddings_file = None
 if 'db_initialized' not in st.session_state:
     st.session_state.db_initialized = False
-if 'pdf_path' not in st.session_state:
-    st.session_state.pdf_path = None
+if 'pdf_files' not in st.session_state:
+    st.session_state.pdf_files = []
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'db_manager' not in st.session_state:
+    st.session_state.db_manager = None
 
 # Sidebar - Configuration
 with st.sidebar:
@@ -58,7 +60,7 @@ with st.sidebar:
     # Database settings
     st.subheader("Database Settings")
     persist_dir = st.text_input("ChromaDB Directory", value="./chroma_db")
-    collection_name = st.text_input("Collection Name", value="pdf_chunks")
+    collection_name = st.text_input("Collection Name", value="multi_pdf_chunks")
     
     # Query settings
     st.subheader("Query Settings")
@@ -67,35 +69,222 @@ with st.sidebar:
     
     st.divider()
     
+    # Check database button
+    if st.button("🔍 Check Database", use_container_width=True):
+        try:
+            db = ChromaDBManager(
+                persist_directory=persist_dir,
+                collection_name=collection_name,
+                embedding_model_name=embedding_model
+            )
+            count = db.collection.count()
+            if count > 0:
+                st.session_state.db_initialized = True
+                st.session_state.db_manager = db
+                st.success(f"✅ Found {count} chunks in database")
+                
+                # Show PDF sources if available
+                if db.pdf_sources:
+                    st.info(f"📄 {len(db.pdf_sources)} PDFs in database")
+            else:
+                st.warning("⚠️ Database is empty")
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+    
     # System status
     st.subheader("📊 System Status")
-    if st.session_state.processing_complete:
-        st.success("✅ PDF Processed")
     if st.session_state.db_initialized:
-        st.success("✅ Database Ready")
-    
-    if st.session_state.pdf_path:
-        st.info(f"📄 Current PDF: {Path(st.session_state.pdf_path).name}")
+        st.success("✅ Database Connected")
+    if st.session_state.processing_complete:
+        st.success("✅ Recent Upload Processed")
+    if st.session_state.pdf_files:
+        st.info(f"📄 {len(st.session_state.pdf_files)} PDFs loaded")
 
 # Main content
-st.title("📚 PDF RAG System")
-st.markdown("Upload a PDF, process it, and ask questions about its content!")
+st.title("📚 Multi-PDF RAG System")
+st.markdown("Query existing database or upload new PDFs to expand your knowledge base!")
 
 # Create tabs for different stages
-tab1, tab2, tab3 = st.tabs(["📤 Upload & Process", "🔍 Query System", "📊 Analytics"])
+tab1, tab2, tab3 = st.tabs(["🔍 Query System", "📤 Upload & Process", "📊 Analytics"])
 
-# Tab 1: Upload & Process
+# Tab 1: Query System (MOVED TO FIRST TAB)
 with tab1:
-    st.header("1️⃣ Upload PDF File")
+    st.header("💬 Ask Questions")
     
-    uploaded_file = st.file_uploader(
-        "Choose a PDF file",
+    # Try to initialize database connection
+    try:
+        if st.session_state.db_manager is None:
+            db = ChromaDBManager(
+                persist_directory=persist_dir,
+                collection_name=collection_name,
+                embedding_model_name=embedding_model
+            )
+            
+            # Check if database has data
+            db_count = db.collection.count()
+            
+            if db_count > 0:
+                st.session_state.db_initialized = True
+                st.session_state.db_manager = db
+                st.success(f"✅ Connected to database with {db_count} chunks")
+            else:
+                st.warning("⚠️ Database is empty. Please upload PDFs in the 'Upload & Process' tab.")
+                st.stop()
+        else:
+            db = st.session_state.db_manager
+            db_count = db.collection.count()
+        
+        # Display database info
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Chunks", db_count)
+        with col2:
+            if db.pdf_sources:
+                st.metric("PDFs in Database", len(db.pdf_sources))
+        with col3:
+            st.metric("Chat History", len(st.session_state.chat_history))
+        
+        st.divider()
+        
+        # PDF filter options
+        st.subheader("🔍 Search Options")
+        
+        use_filter = st.checkbox("Filter by specific PDFs")
+        
+        pdf_filter = None
+        if use_filter and db.pdf_sources:
+            pdf_names = [Path(pdf).name for pdf in db.pdf_sources]
+            selected_pdfs = st.multiselect(
+                "Select PDFs to search",
+                options=pdf_names,
+                help="Leave empty to search all PDFs"
+            )
+            if selected_pdfs:
+                pdf_filter = selected_pdfs
+        
+        st.divider()
+        
+        # Query interface
+        st.subheader("💡 Ask Your Question")
+        
+        # Chat history display
+        if st.session_state.chat_history:
+            with st.expander("📜 View Chat History", expanded=False):
+                for i, chat in enumerate(reversed(st.session_state.chat_history[-5:])):
+                    st.markdown(f"**Q:** {chat['query']}")
+                    st.markdown(f"**A:** {chat['answer'][:300]}...")
+                    st.markdown(f"*{chat.get('timestamp', 'N/A')}*")
+                    st.divider()
+        
+        # Query input
+        user_query = st.text_area(
+            "Enter your question:",
+            height=100,
+            placeholder="e.g., What are the main findings across all documents?",
+            key="query_input"
+        )
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col2:
+            search_button = st.button("🔎 Search", type="primary", use_container_width=True)
+        
+        if search_button and user_query.strip():
+            with st.spinner("Searching and generating answer..."):
+                try:
+                    result = db.intelligent_query(
+                        user_query,
+                        n_results=n_results,
+                        min_score=min_score,
+                        pdf_filter=pdf_filter
+                    )
+                    
+                    # Display result
+                    st.divider()
+                    st.subheader("💡 Answer")
+                    
+                    if result['success']:
+                        # Answer
+                        st.markdown(result['answer'])
+                        
+                        # Metadata
+                        with st.expander("📊 Response Metadata", expanded=False):
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("PDFs Used", len(result.get('pdfs_used', [])))
+                            with col2:
+                                st.metric("Text Sources", result['content_summary'].get('text', 0))
+                            with col3:
+                                st.metric("Images", result['content_summary'].get('images', 0))
+                            with col4:
+                                st.metric("Tables", result['content_summary'].get('tables', 0))
+                            
+                            if result.get('pdfs_used'):
+                                st.write("**Source PDFs:**")
+                                for pdf in result['pdfs_used']:
+                                    st.write(f"• {pdf}")
+                        
+                        # Images used
+                        if result.get('images'):
+                            with st.expander(f"🖼️ Visual Evidence ({len(result['images'])} images)"):
+                                for img_info in result['images']:
+                                    st.write(f"**{img_info['pdf_name']} - Page {img_info['page']}**")
+                                    st.write(f"*{img_info['description'][:100]}...*")
+                                    st.write(f"Score: {img_info['score']:.3f}")
+                                    st.divider()
+                        
+                        # Save to chat history
+                        st.session_state.chat_history.append({
+                            'query': user_query,
+                            'answer': result['answer'],
+                            'pdfs_used': result.get('pdfs_used', []),
+                            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                        
+                        st.success("✅ Response generated successfully!")
+                        
+                    else:
+                        st.error(result['answer'])
+                        
+                except Exception as e:
+                    st.error(f"❌ Error during search: {str(e)}")
+                    import traceback
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+        
+        elif search_button:
+            st.warning("⚠️ Please enter a question")
+        
+        with col3:
+            if st.button("🗑️ Clear History", use_container_width=True):
+                st.session_state.chat_history = []
+                st.rerun()
+                
+    except Exception as e:
+        st.error(f"❌ Error connecting to database: {str(e)}")
+        st.info("💡 Tip: Make sure the database directory exists and has been initialized with data.")
+        st.info("👉 Go to 'Upload & Process' tab to add PDFs to the database.")
+
+# Tab 2: Upload & Process
+with tab2:
+    st.header("📤 Upload PDF Files")
+    st.info("📝 Upload new PDFs to add them to your existing database or create a new one.")
+    
+    uploaded_files = st.file_uploader(
+        "Choose PDF files",
         type=['pdf'],
-        help="Upload one PDF file to process"
+        accept_multiple_files=True,
+        help="Upload one or more PDF files to process"
     )
     
-    if uploaded_file:
-        st.success(f"✅ PDF uploaded: {uploaded_file.name} ({uploaded_file.size / 1024:.2f} KB)")
+    if uploaded_files:
+        st.success(f"✅ {len(uploaded_files)} PDF file(s) uploaded")
+        
+        # Display uploaded files
+        with st.expander("📄 Uploaded Files", expanded=True):
+            for i, file in enumerate(uploaded_files, 1):
+                st.write(f"{i}. {file.name} ({file.size / 1024:.2f} KB)")
         
         st.divider()
         
@@ -103,17 +292,20 @@ with tab1:
         col1, col2, col3 = st.columns([1, 1, 1])
         
         with col2:
-            if st.button("🚀 Process PDF", type="primary", use_container_width=True):
+            if st.button("🚀 Process PDFs", type="primary", use_container_width=True):
                 
-                # Create temporary directory for processing
+                # Create temporary directory for PDFs
                 with tempfile.TemporaryDirectory() as temp_dir:
                     
-                    # Save uploaded file
-                    pdf_path = os.path.join(temp_dir, uploaded_file.name)
-                    with open(pdf_path, 'wb') as f:
-                        f.write(uploaded_file.getbuffer())
+                    # Save uploaded files
+                    pdf_paths = []
+                    for uploaded_file in uploaded_files:
+                        file_path = os.path.join(temp_dir, uploaded_file.name)
+                        with open(file_path, 'wb') as f:
+                            f.write(uploaded_file.getbuffer())
+                        pdf_paths.append(file_path)
                     
-                    st.session_state.pdf_path = pdf_path
+                    st.session_state.pdf_files = [f.name for f in uploaded_files]
                     
                     # Progress tracking
                     progress_bar = st.progress(0)
@@ -121,7 +313,7 @@ with tab1:
                     
                     try:
                         # Step 1: Chunking
-                        status_text.text("📄 Step 1/3: Extracting chunks from PDF...")
+                        status_text.text("📄 Step 1/3: Extracting chunks from PDFs...")
                         progress_bar.progress(10)
                         
                         chunker = PDFChunker(
@@ -129,8 +321,8 @@ with tab1:
                             chunk_overlap=chunk_overlap
                         )
                         
-                        with st.spinner("Processing PDF..."):
-                            all_chunks = chunker.chunk_pdf(pdf_path)
+                        with st.spinner("Processing PDFs..."):
+                            all_chunks = chunker.chunk_multiple_pdfs(pdf_paths)
                         
                         progress_bar.progress(33)
                         
@@ -140,14 +332,6 @@ with tab1:
                         st.session_state.chunks_file = chunks_file
                         
                         # Display chunk stats
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Text Chunks", len(all_chunks['text_chunks']))
-                        with col2:
-                            st.metric("Images", len(all_chunks['image_chunks']))
-                        with col3:
-                            st.metric("Tables", len(all_chunks['table_chunks']))
-                        
                         st.success(f"✅ Extracted {len(all_chunks['text_chunks'])} text chunks, "
                                  f"{len(all_chunks['image_chunks'])} images, "
                                  f"{len(all_chunks['table_chunks'])} tables")
@@ -161,7 +345,7 @@ with tab1:
                             caption_model_name=caption_model
                         )
                         
-                        with st.spinner("Generating embeddings (this may take a while)..."):
+                        with st.spinner("Generating embeddings..."):
                             processed_chunks = processor.process_all_chunks(
                                 chunks_file,
                                 output_file=os.path.join(temp_dir, "embeddings.json")
@@ -181,8 +365,7 @@ with tab1:
                         db = ChromaDBManager(
                             persist_directory=persist_dir,
                             collection_name=collection_name,
-                            embedding_model_name=embedding_model,
-                            pdf_source_path=pdf_path
+                            embedding_model_name=embedding_model
                         )
                         
                         with st.spinner("Inserting into database..."):
@@ -191,192 +374,60 @@ with tab1:
                         progress_bar.progress(100)
                         status_text.text("✅ Processing complete!")
                         
-                        st.success(f"🎉 Successfully processed PDF and inserted {total_inserted} chunks!")
+                        st.success(f"🎉 Successfully processed {len(uploaded_files)} PDFs and "
+                                 f"inserted {total_inserted} chunks into the database!")
                         
                         st.session_state.processing_complete = True
                         st.session_state.db_initialized = True
+                        st.session_state.db_manager = db  # Update the database manager
                         
-                        # Display processing summary
+                        # Display summary
                         with st.expander("📊 Processing Summary", expanded=True):
                             stats = db.get_stats()
-                            
                             col1, col2, col3 = st.columns(3)
+                            
                             with col1:
                                 st.metric("Total Chunks", stats['total_chunks'])
                             with col2:
-                                st.metric("Pages with Content", stats['pages_with_content'])
+                                st.metric("Unique PDFs", stats['unique_pdfs'])
                             with col3:
                                 st.metric("Chunk Types", len(stats['chunk_types']))
                             
-                            st.subheader("Chunk Type Distribution")
-                            for chunk_type, count in sorted(stats['chunk_types'].items()):
-                                st.write(f"• {chunk_type.title()}: {count} chunks")
+                            st.subheader("Chunks per PDF")
+                            for pdf_name, count in sorted(stats['pdf_counts'].items()):
+                                st.write(f"• {pdf_name}: {count} chunks")
                         
                         st.balloons()
+                        st.info("💡 You can now query your documents in the 'Query System' tab!")
                         
                     except Exception as e:
                         st.error(f"❌ Error during processing: {str(e)}")
-                        st.exception(e)
+                        import traceback
+                        with st.expander("Error Details"):
+                            st.code(traceback.format_exc())
                         progress_bar.progress(0)
                         status_text.text("Processing failed")
 
-# Tab 2: Query System
-with tab2:
-    st.header("2️⃣ Ask Questions")
-    
-    if not st.session_state.db_initialized:
-        st.warning("⚠️ Please upload and process a PDF first (Tab 1)")
-    else:
-        # Initialize database
-        try:
-            db = ChromaDBManager(
-                persist_directory=persist_dir,
-                collection_name=collection_name,
-                embedding_model_name=embedding_model,
-                pdf_source_path=st.session_state.pdf_path
-            )
-            
-            st.info("💡 Ask any question - the system will automatically find relevant text, images, and tables!")
-            
-            st.divider()
-            
-            # Chat history display
-            if st.session_state.chat_history:
-                st.subheader("📜 Chat History")
-                for i, chat in enumerate(st.session_state.chat_history):
-                    with st.container():
-                        st.markdown(f"**Q{i+1}:** {chat['query']}")
-                        with st.expander(f"View Answer #{i+1}", expanded=(i == len(st.session_state.chat_history) - 1)):
-                            st.markdown(chat['answer'])
-                            
-                            # Show content summary
-                            content = chat.get('content_summary', {})
-                            if any(content.values()):
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("Text Sources", content.get('text', 0))
-                                with col2:
-                                    st.metric("Images", content.get('images', 0))
-                                with col3:
-                                    st.metric("Tables", content.get('tables', 0))
-                        st.divider()
-            
-            # Query input
-            st.subheader("💬 Ask Your Question")
-            user_query = st.text_area(
-                "Enter your question:",
-                height=100,
-                placeholder="e.g., What are the main findings in this document?"
-            )
-            
-            col1, col2, col3 = st.columns([1, 1, 1])
-            
-            with col2:
-                if st.button("🔎 Search", type="primary", use_container_width=True):
-                    if user_query.strip():
-                        with st.spinner("Searching and generating answer..."):
-                            result = db.intelligent_query(
-                                user_query,
-                                n_results=n_results,
-                                min_score=min_score
-                            )
-                        
-                        # Display result
-                        st.divider()
-                        st.subheader("💡 Answer")
-                        
-                        if result['success']:
-                            # Answer
-                            st.markdown(result['answer'])
-                            
-                            # Metadata
-                            with st.expander("📊 Response Metadata", expanded=False):
-                                col1, col2, col3, col4 = st.columns(4)
-                                
-                                with col1:
-                                    st.metric("Total Sources", result.get('n_docs_used', 0))
-                                with col2:
-                                    st.metric("Text Sources", result['content_summary'].get('text', 0))
-                                with col3:
-                                    st.metric("Images", result['content_summary'].get('images', 0))
-                                with col4:
-                                    st.metric("Tables", result['content_summary'].get('tables', 0))
-                                
-                                # Show source quality
-                                if result.get('retrieved_docs'):
-                                    scores = [doc['score'] for doc in result['retrieved_docs']]
-                                    avg_score = sum(scores) / len(scores)
-                                    max_score = max(scores)
-                                    st.write("**Source Quality:**")
-                                    st.write(f"• Average Relevance: {avg_score:.3f}")
-                                    st.write(f"• Best Match Score: {max_score:.3f}")
-                            
-                            # Images used
-                            if result.get('images'):
-                                with st.expander(f"🖼️ Visual Evidence ({len(result['images'])} images)"):
-                                    for img_info in result['images']:
-                                        st.write(f"**Page {img_info['page']}**")
-                                        st.write(f"*{img_info['description'][:150]}...*")
-                                        st.write(f"Relevance Score: {img_info['score']:.3f}")
-                                        if img_info.get('caption'):
-                                            st.write(f"Caption: {img_info['caption'][:100]}...")
-                                        st.divider()
-                            
-                            # PDF links
-                            if result.get('pdf_links'):
-                                with st.expander("📑 Source Pages"):
-                                    pages = sorted(set([link['page'] for link in result['pdf_links']]))
-                                    st.write(f"Referenced pages: {', '.join(map(str, pages))}")
-                                    
-                                    # Group by type
-                                    links_by_type = {}
-                                    for link in result['pdf_links']:
-                                        chunk_type = link['chunk_type']
-                                        if chunk_type not in links_by_type:
-                                            links_by_type[chunk_type] = []
-                                        links_by_type[chunk_type].append(link['page'])
-                                    
-                                    for chunk_type, pages in links_by_type.items():
-                                        unique_pages = sorted(set(pages))
-                                        st.write(f"• {chunk_type.title()}: Pages {', '.join(map(str, unique_pages))}")
-                            
-                            # Save to chat history
-                            st.session_state.chat_history.append({
-                                'query': user_query,
-                                'answer': result['answer'],
-                                'content_summary': result['content_summary'],
-                                'timestamp': datetime.now().isoformat()
-                            })
-                            
-                        else:
-                            st.error(result['answer'])
-                    else:
-                        st.warning("Please enter a question")
-            
-            with col3:
-                if st.button("🗑️ Clear History", use_container_width=True):
-                    st.session_state.chat_history = []
-                    st.rerun()
-                    
-        except Exception as e:
-            st.error(f"❌ Error initializing database: {str(e)}")
-            st.exception(e)
-
 # Tab 3: Analytics
 with tab3:
-    st.header("3️⃣ System Analytics")
+    st.header("📊 System Analytics")
     
-    if not st.session_state.db_initialized:
-        st.warning("⚠️ Please upload and process a PDF first (Tab 1)")
-    else:
-        try:
+    try:
+        # Initialize or get existing database connection
+        if st.session_state.db_manager is None:
             db = ChromaDBManager(
                 persist_directory=persist_dir,
                 collection_name=collection_name,
-                embedding_model_name=embedding_model,
-                pdf_source_path=st.session_state.pdf_path
+                embedding_model_name=embedding_model
             )
-            
+        else:
+            db = st.session_state.db_manager
+        
+        db_count = db.collection.count()
+        
+        if db_count == 0:
+            st.warning("⚠️ Database is empty. Upload PDFs in the 'Upload & Process' tab.")
+        else:
             # Get statistics
             stats = db.get_stats()
             
@@ -387,7 +438,7 @@ with tab3:
             with col1:
                 st.metric("Total Chunks", stats['total_chunks'])
             with col2:
-                st.metric("Pages with Content", stats['pages_with_content'])
+                st.metric("Unique PDFs", stats['unique_pdfs'])
             with col3:
                 st.metric("Text Chunks", stats['chunk_types'].get('text', 0))
             with col4:
@@ -404,9 +455,31 @@ with tab3:
                     columns=['Type', 'Count']
                 )
                 st.bar_chart(df_types.set_index('Type'))
+            
+            st.divider()
+            
+            # Per-PDF statistics
+            st.subheader("📄 Chunks per PDF")
+            if stats['pdf_counts']:
+                df_pdfs = pd.DataFrame(
+                    list(stats['pdf_counts'].items()),
+                    columns=['PDF', 'Chunks']
+                ).sort_values('Chunks', ascending=False)
                 
-                # Show table
-                st.dataframe(df_types, use_container_width=True)
+                st.dataframe(df_pdfs, use_container_width=True)
+                st.bar_chart(df_pdfs.set_index('PDF'))
+            
+            st.divider()
+            
+            # List all PDFs
+            st.subheader("📚 PDF Files in Database")
+            if db.pdf_sources:
+                for i, pdf_source in enumerate(db.pdf_sources, 1):
+                    pdf_name = Path(pdf_source).name
+                    chunk_count = stats['pdf_counts'].get(pdf_name, 0)
+                    st.write(f"{i}. **{pdf_name}** - {chunk_count} chunks")
+            else:
+                st.info("No PDF source information available")
             
             st.divider()
             
@@ -415,63 +488,37 @@ with tab3:
             st.write(f"**Location:** {persist_dir}")
             st.write(f"**Collection:** {collection_name}")
             st.write(f"**Embedding Model:** {embedding_model}")
-            if st.session_state.pdf_path:
-                st.write(f"**Source PDF:** {Path(st.session_state.pdf_path).name}")
             
-            st.divider()
-            
-            # Chat statistics
-            if st.session_state.chat_history:
-                st.subheader("💬 Chat Statistics")
-                st.metric("Total Queries", len(st.session_state.chat_history))
-                
-                # Export option
-                if st.button("📥 Export Chat History"):
-                    export_data = json.dumps(st.session_state.chat_history, indent=2)
-                    st.download_button(
-                        label="Download JSON",
-                        data=export_data,
-                        file_name=f"chat_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json"
-                    )
-            else:
-                st.info("No chat history yet. Ask some questions in the Query System tab!")
-            
-            st.divider()
-            
-            # Advanced operations
-            st.subheader("🔧 Advanced Operations")
-            
+            # Export options
             col1, col2 = st.columns(2)
             
             with col1:
-                if st.button("📊 Show Full Database Stats", use_container_width=True):
-                    with st.expander("Full Statistics", expanded=True):
-                        db.print_stats()
-                        st.json(stats)
+                if st.button("📥 Export Chat History"):
+                    if st.session_state.chat_history:
+                        export_data = json.dumps(st.session_state.chat_history, indent=2)
+                        st.download_button(
+                            label="Download JSON",
+                            data=export_data,
+                            file_name=f"chat_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                            mime="application/json"
+                        )
+                    else:
+                        st.info("No chat history to export")
             
             with col2:
-                if st.button("🗑️ Clear Database", type="secondary", use_container_width=True):
-                    if st.checkbox("Confirm deletion"):
-                        try:
-                            # Delete collection
-                            db.client.delete_collection(collection_name)
-                            st.success("✅ Database cleared!")
-                            st.session_state.db_initialized = False
-                            st.session_state.processing_complete = False
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error clearing database: {e}")
+                if st.button("🔄 Refresh Statistics"):
+                    st.session_state.db_manager = None
+                    st.rerun()
                     
-        except Exception as e:
-            st.error(f"❌ Error loading analytics: {str(e)}")
-            st.exception(e)
+    except Exception as e:
+        st.error(f"❌ Error loading analytics: {str(e)}")
+        st.info("💡 Make sure the database has been initialized with data.")
 
 # Footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: gray;'>
-    <p>PDF RAG System | Universal Search across Text, Images & Tables</p>
-    <p style='font-size: 12px;'>Powered by ChromaDB & Custom Models</p>
+    <p>Multi-PDF RAG System | Powered by ChromaDB & Custom Models</p>
+    <p style='font-size: 0.9em;'>💡 Query existing data or upload new PDFs to expand your knowledge base</p>
 </div>
 """, unsafe_allow_html=True)
