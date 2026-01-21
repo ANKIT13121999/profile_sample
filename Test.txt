@@ -1,0 +1,53 @@
+Slide 1: Introduction to RAG
+
+This slide provides a high-level overview of Retrieval-Augmented Generation (RAG). RAG is a technique that enhances Large Language Models (LLMs) by retrieving relevant information from an external knowledge base before generating a response. This process grounds the LLM's output in factual data, reducing hallucinations and providing up-to-date information.
+
+
+
+Slide 2: Naive RAG - The Basic Flow
+
+This slide illustrates the fundamental "Naive RAG" process. It is divided into two main pipelines:
+
+Data Ingestion: Documents are chunked into smaller pieces, converted into vector embeddings, and stored in a vector database.
+
+Retrieval & Generation: A user's query is embedded and used to search the vector database for the most relevant (top-K) chunks. These chunks are then passed to the LLM along with the query to generate a final answer.
+
+
+
+Slide 3: Vector Database Indexing
+
+A crucial part of RAG is efficient retrieval. This slide shows how data is prepared for fast searching within a vector database. After embedding, vectors and their metadata are processed by an indexing algorithm (like HNSW or IVF). This organizes the vectors into a specialized data structure, such as a graph or a set of clusters, enabling rapid similarity searching.
+
+
+
+Slide 4: Advanced RAG - Pre-Retrieval Techniques
+
+To improve upon Naive RAG, advanced techniques can be applied. This slide focuses on pre-retrieval strategies, where the user's query is transformed before being used for search. Techniques include query expansion (adding synonyms), rewriting (clarifying intent), and routing (directing the query to a specific database). This results in a more effective search query.
+
+
+
+Slide 5: Advanced RAG - Post-Retrieval & Iterative Flow
+
+This slide illustrates advanced techniques applied after the initial retrieval. The retrieved chunks are first reranked and filtered to select the most relevant ones. The context is then enriched. The LLM evaluates if the retrieved information is sufficient; if not, a feedback loop is initiated to refine the query and perform another retrieval step.
+
+
+
+Slide 6: GraphRAG - Retrieval with Knowledge Graphs
+
+GraphRAG is a powerful alternative or complement to vector-based RAG. Instead of relying solely on semantic similarity, it uses a knowledge graph to represent structured relationships between entities. The user's query is mapped to entities in the graph, and a traversal algorithm finds relevant subgraphs, providing richer, more structured context to the LLM.
+
+
+
+Slide 7: RAG Evaluation & Challenges
+
+Evaluating a RAG system is crucial for ensuring its effectiveness. This slide presents a dashboard of key metrics for both the retriever (e.g., Precision, Recall) and the generator (e.g., Faithfulness, Answer Relevance). It also highlights common challenges such as hallucinations, data privacy, and latency, which must be addressed for a robust production system.
+
+
+
+Slide 8: End-to-End RAG Ecosystem Summary
+
+This final slide provides a holistic view of a complete RAG ecosystem. It unifies all the previously discussed concepts into a single architectural diagram, showing the entire lifecycle from data ingestion (both structured and unstructured) to user interaction and continuous evaluation. It demonstrates how different retrieval methods (naive, advanced, graph) can be orchestrated to create a powerful and adaptive system.
+
+
+
+[1]: What is Retrieval-Augmented
